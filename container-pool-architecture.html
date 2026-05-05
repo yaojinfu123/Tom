@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>容器池架构图</title>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            min-height: 100vh;
+            padding: 40px 20px;
+        }
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        h1 {
+            color: #fff;
+            text-align: center;
+            margin-bottom: 40px;
+            font-size: 2em;
+            font-weight: 600;
+        }
+        .diagram-section {
+            background: rgba(255,255,255,0.95);
+            border-radius: 16px;
+            padding: 30px;
+            margin-bottom: 40px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+        .diagram-section h2 {
+            color: #1a1a2e;
+            margin-bottom: 20px;
+            font-size: 1.4em;
+            border-bottom: 3px solid #e94560;
+            padding-bottom: 10px;
+        }
+        .mermaid {
+            display: flex;
+            justify-content: center;
+            overflow-x: auto;
+        }
+        .legend {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 30px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 12px;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 0.9em;
+            color: #333;
+        }
+        .legend-color {
+            width: 20px;
+            height: 20px;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🐳 容器池完整架构图</h1>
+        
+        <!-- 图1: 完整请求流程 -->
+        <div class="diagram-section">
+            <h2>📊 图1: 完整请求处理流程</h2>
+            <div class="mermaid">
+flowchart TB
+    subgraph 请求入口
+        A[👤 用户请求] --> B[API Gateway]
+        B --> C[负载均衡器]
+    end
+    
+    subgraph LLM处理层
+        C --> D[🤖 LLM 意图理解]
+        D --> E[代码生成 + 语言检测]
+        E --> F[选择镜像模板]
+    end
+    
+    subgraph 混合弹性池
+        F --> G{容器池选择}
+        
+        G -->|90% 热路径| H[L1 热容器池]
+        G -->|9% 中路径| I[L2 按需创建]
+        G -->|1% 兜底| J[L3 排队/拒绝]
+        
+        H -->|空闲容器| K[立即执行]
+        H -->|池满| L{进入L2?}
+        
+        I -->|创建新容器| M[执行代码]
+        I -->|失败| N{进入L3?}
+        
+        J -->|排队中| O[等待执行]
+        J -->|超时/拒绝| P[返回错误]
+    end
+    
+    subgraph 执行层
+        K --> Q[🔥 安全沙箱执行]
+        M --> Q
+        O --> Q
+        Q --> R[捕获输出]
+    end
+    
+    subgraph 监控层
+        Q --> S[📊 Prometheus 监控]
+        S --> T[指标收集]
+        T --> U{自动扩缩容?}
+        U -->|是| V[触发 K8s HPA]
+        U -->|否| W[继续监控]
+        V --> X[增加容器节点]
+    end
+    
+    subgraph 响应层
+        R --> Y[LLM 格式化结果]
+        Y --> Z[返回用户]
+    end
+    
+    style A fill:#e94560,color:#fff
+    style K fill:#00d9ff,color:#000
+    style P fill:#ff6b6b,color:#fff
+    style Q fill:#f39c12,color:#000
+            </div>
+            <div class="legend">
+                <div class="legend-item"><div class="legend-color" style="background:#e94560"></div>用户请求</div>
+                <div class="legend-item"><div class="legend-color" style="background:#00d9ff"></div>快速路径 (<100ms)</div>
+                <div class="legend-item"><div class="legend-color" style="background:#f39c12"></div>核心执行</div>
+                <div class="legend-item"><div class="legend-color" style="background:#ff6b6b"></div>降级处理</div>
+            </div>
+        </div>
+
+        <!-- 图2: 混合弹性池架构 -->
+        <div class="diagram-section">
+            <h2>🔄 图2: 混合弹性池 (Hybrid Pool) 详细架构</h2>
+            <div class="mermaid">
+flowchart TB
+    subgraph 入口层["🚪 请求入口层"]
+        A1[🌐 HTTP/gRPC 请求]
+        A2[📱 SDK 调用]
+        A3[🔌 WebSocket]
+    end
+    
+    subgraph 调度层["⚙️ 智能调度层"]
+        A1 --> B1[请求分发器]
+        A2 --> B1
+        A3 --> B1
+        
+        B1 --> C1[语言检测器]
+        C1 --> C2[依赖分析器]
+        C2 --> C3[优先级评估]
+        C3 --> D[路由决策引擎]
+    end
+    
+    subgraph L1["🔥 L1: 热容器池 (预热)"]
+        D -->|常用语言| E1[Python 容器 x5]
+        D -->|常用语言| E2[Node.js 容器 x5]
+        D -->|常用语言| E3[Go 容器 x3]
+        D -->|常用语言| E4[Java 容器 x2]
+        
+        E1 --- F1[容器复用池]
+        E2 --- F1
+        E3 --- F1
+        E4 --- F1
+    end
+    
+    subgraph L2["⚡ L2: 按需创建容器 (弹性)"]
+        D -->|次常用语言| G1[Rust 容器]
+        D -->|次常用语言| G2[PHP 容器]
+        D -->|次常用语言| G3[C++ 容器]
+        
+        G1 --> H[异步创建]
+        G2 --> H
+        G3 --> H
+        H --> I[容器就绪]
+    end
+    
+    subgraph L3["🛡️ L3: 排队/拒绝 (兜底)"]
+        D -->|冷门语言| J1[等待队列]
+        D -->|池耗尽| J2[限流器]
+        
+        J1 --> K1[超时控制<br/>30s]
+        J1 --> K2[优先级排序]
+        J2 --> L[返回 429/503]
+    end
+    
+    subgraph 扩容层["📈 动态扩缩容"]
+        M[Prometheus Metrics] --> N{利用率 > 80%?}
+        N -->|是| O[触发扩容]
+        N -->|否| P{利用率 < 20%?}
+        P -->|是| Q[触发缩容]
+        O --> R[新增容器]
+        Q --> S[回收容器]
+    end
+    
+    subgraph 监控层["👁️ 健康监控"]
+        T[心跳检测] --> U[容器健康]
+        T --> V[资源使用]
+        U -->|不健康| W[容器重建]
+        V -->|超限| X[资源隔离]
+    end
+    
+    style L1 fill:#ff6b6b,color:#fff
+    style L2 fill:#feca57,color:#000
+    style L3 fill:#a55eea,color:#fff
+    style 调度层 fill:#00d9ff,color:#000
+    style 扩容层 fill:#26de81,color:#000
+    style 监控层 fill:#fd79a8,color:#fff
+            </div>
+        </div>
+
+        <!-- 图3: 状态流转图 -->
+        <div class="diagram-section">
+            <h2>🔁 图3: 容器状态流转与生命周期</h2>
+            <div class="mermaid">
+stateDiagram-v2
+    [*] --> 创建中: 用户首次请求
+    
+    创建中 --> 热池就绪: 容器创建完成
+    创建中 --> 错误: 创建失败
+    
+    热池就绪 --> 执行中: 获取请求
+    热池就绪 --> 热池就绪: 空闲心跳(保持热)
+    
+    执行中 --> 热池就绪: 执行完成,清理环境
+    执行中 --> 执行中: 执行超时
+    执行中 --> 错误: 执行崩溃
+    
+    错误 --> 重建中: 自动重试
+    错误 --> 销毁: 重试超限
+    
+    重建中 --> 热池就绪: 重建成功
+    重建中 --> 销毁: 重建失败
+    
+    热池就绪 --> 冷却中: 空闲超时(5分钟)
+    热池就绪 --> 销毁: 资源紧张
+    
+    冷却中 --> 热池就绪: 新请求到达
+    冷却中 --> 销毁: 冷却超时(30分钟)
+    
+    销毁 --> [*]: 资源释放
+    
+    note right of 热池就绪: 预热容器<br/>随时可执行<br/>延迟 <100ms
+    note right of 冷却中: 温容器<br/>保留但不预热<br/>延迟 <1s
+    note right of 执行中: 正在执行代码<br/>CPU/内存占用中<br/>隔离运行
+            </div>
+        </div>
+
+        <!-- 图4: 容量规划与限流策略 -->
+        <div class="diagram-section">
+            <h2>🚦 图4: 容量规划与限流策略</h2>
+            <div class="mermaid">
+flowchart TB
+    subgraph 请求量["📊 负载等级"]
+        A1[0-50 QPS<br/>低负载]
+        A2[50-200 QPS<br/>中负载]
+        A3[200-500 QPS<br/>高负载]
+        A4[>500 QPS<br/>超高负载]
+    end
+    
+    subgraph 扩容策略["📈 扩容策略"]
+        A1 --> B1[基础容量<br/>每语言 2 容器]
+        A2 --> B2[中等扩容<br/>每语言 5 容器]
+        A3 --> B3[弹性扩容<br/>每语言 10 容器<br/>启动 L2 快速通道]
+        A4 --> B4[全面扩容<br/>每语言 20+ 容器<br/>启动 L3 排队机制]
+    end
+    
+    subgraph 限流规则["⚡ 限流规则"]
+        B1 --> C1[无限制<br/>快速响应]
+        B2 --> C2[轻度限流<br/>200 请求/秒/语言]
+        B3 --> C3[中度限流<br/>100 请求/秒/语言<br/>强制排队]
+        B4 --> C4[严格限流<br/>50 请求/秒/语言<br/>L3 兜底拒绝]
+    end
+    
+    subgraph 降级路径["🛡️ 优雅降级"]
+        C1 --> D1[✓ 正常返回]
+        C2 --> D2[⚠️ 轻微延迟]
+        C3 --> D3[⏳ 强制排队<br/>超时返回结果]
+        C4 --> D4[✗ 返回错误码<br/>429/503]
+    end
+    
+    subgraph 恢复机制["🔄 恢复机制"]
+        D4 --> E[熔断器打开<br/>30秒后尝试]
+        E --> F{负载下降?}
+        F -->|是| G[熔断器半开<br/>逐步恢复]
+        F -->|否| E
+        G --> H{成功率>95%?}
+        H -->|是| I[恢复正常]
+        H -->|否| E
+    end
+    
+    style 请求量 fill:#74b9ff,color:#000
+    style 扩容策略 fill:#fdcb6e,color:#000
+    style 限流规则 fill:#e17055,color:#fff
+    style 降级路径 fill:#a29bfe,color:#fff
+    style 恢复机制 fill:#00b894,color:#fff
+            </div>
+        </div>
+
+        <!-- 图5: 完整技术架构 -->
+        <div class="diagram-section">
+            <h2>🏗️ 图5: 完整技术架构总览</h2>
+            <div class="mermaid">
+flowchart TB
+    subgraph 客户端["👤 客户端"]
+        C1[Web 应用]
+        C2[移动 App]
+        C3[API 调用]
+    end
+    
+    subgraph 网关层["🌐 网关层"]
+        C1 --> G1[Nginx<br/>反向代理]
+        C2 --> G1
+        C3 --> G1
+        G1 --> G2[API Gateway<br/>Kong/APISIX]
+        G2 --> G3[身份认证<br/>JWT/OAuth2]
+        G3 --> G4[限流熔断<br/>Redis Token Bucket]
+    end
+    
+    subgraph LLM层["🤖 AI 层"]
+        G4 --> L1[LLM Router<br/>Claude/GPT-4]
+        L1 --> L2[意图理解]
+        L1 --> L3[代码生成]
+        L1 --> L4[结果格式化]
+    end
+    
+    subgraph 编排层["🎯 编排层"]
+        L2 --> O1[任务调度器]
+        L3 --> O1
+        O1 --> O2[容器选择器<br/>L1/L2/L3]
+        O2 --> O3[资源分配器]
+        O3 --> O4[健康检查器]
+    end
+    
+    subgraph 容器池层["🐳 容器池层"]
+        subgraph 热池["🔥 L1 热池"]
+            H1[Python x10]
+            H2[Node.js x8]
+            H3[Go x5]
+            H4[Java x4]
+        end
+        
+        subgraph 弹性池["⚡ L2 弹性池"]
+            E1[Rust]
+            E2[PHP]
+            E3[C++]
+            E4[其他]
+        end
+        
+        subgraph 兜底池["🛡️ L3 兜底"]
+            L3_1[等待队列]
+            L3_2[拒绝服务]
+        end
+    end
+    
+    subgraph 运行时["⚙️ 运行时层"]
+        O4 --> R1[Docker Engine]
+        R1 --> R2[containerd]
+        R2 --> R3[runc]
+        R3 --> R4[内核 namespaces]
+        R4 --> R5[Cgroups 资源限制]
+        R5 --> R6[seccomp 安全]
+    end
+    
+    subgraph 存储层["💾 存储层"]
+        S1[代码存储<br/>S3/MinIO]
+        S2[执行结果<br/>Redis]
+        S3[镜像仓库<br/>Harbor]
+    end
+    
+    subgraph 监控层["📊 可观测性"]
+        M1[Prometheus<br/>指标采集]
+        M2[Grafana<br/>可视化]
+        M3[Loki<br/>日志聚合]
+        M4[Jaeger<br/>链路追踪]
+        M5[Alertmanager<br/>告警通知]
+    end
+    
+    subgraph K8s层["☸️ Kubernetes 层"]
+        M1 --> K1[HPA<br/>水平扩缩容]
+        M2 --> K1
+        K1 --> K2[Deployment]
+        K2 --> K3[Pod 管理]
+        K3 --> K4[Node 调度]
+    end
+    
+    subgraph 底层资源["🖥️ 底层资源"]
+        K4 --> N1[计算节点 1]
+        K4 --> N2[计算节点 2]
+        K4 --> N3[计算节点 N]
+    end
+    
+    O2 -.->|90%| H1
+    O2 -.->|90%| H2
+    O2 -.->|90%| H3
+    O2 -.->|90%| H4
+    O2 -.->|9%| E1
+    O2 -.->|9%| E2
+    O2 -.->|1%| L3_1
+    
+    编排层 -.->|调度| 运行时
+    运行时 -.->|执行| 存储层
+    监控层 -.->|监控| 容器池层
+    K8s层 -.->|编排| 底层资源
+    
+    style 客户端 fill:#e94560,color:#fff
+    style 网关层 fill:#00d9ff,color:#000
+    style LLM层 fill:#a29bfe,color:#fff
+    style 编排层 fill:#f39c12,color:#000
+    style 容器池层 fill:#26de81,color:#000
+    style 运行时 fill:#fd79a8,color:#fff
+    style 监控层 fill:#74b9ff,color:#000
+            </div>
+        </div>
+    </div>
+
+    <script>
+        mermaid.initialize({
+            startOnLoad: true,
+            theme: 'default',
+            flowchart: {
+                useMaxWidth: true,
+                htmlLabels: true,
+                curve: 'basis'
+            },
+            themeVariables: {
+                primaryColor: '#e94560',
+                primaryTextColor: '#fff',
+                primaryBorderColor: '#333',
+                lineColor: '#333',
+                secondaryColor: '#00d9ff',
+                tertiaryColor: '#f39c12'
+            }
+        });
+    </script>
+</body>
+</html>
